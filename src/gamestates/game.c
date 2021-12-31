@@ -1,5 +1,5 @@
-/*! \file empty.c
- *  \brief Empty gamestate.
+/*! \file game.c
+ *  \brief Gameplay gamestate.
  */
 /*
  * Copyright (c) Sebastian Krzyszkowiak <dos@dosowisko.net>
@@ -21,21 +21,39 @@
 #include "../common.h"
 #include <libsuperderpy.h>
 
+#define NUM_STARS 42
+
 struct GamestateResources {
 	// This struct is for every resource allocated and used by your gamestate.
 	// It gets created on load and then gets passed around to all other function calls.
-
-	bool unused; // just so the struct is not 0 size, remove me when adding something
+	ALLEGRO_BITMAP *star, *houses;
+	struct {
+		double x, y, counter, speed, size, deviation;
+	} stars[NUM_STARS];
 };
 
 int Gamestate_ProgressCount = 1; // number of loading steps as reported by Gamestate_Load; 0 when missing
 
 void Gamestate_Logic(struct Game* game, struct GamestateResources* data, double delta) {
 	// Here you should do all your game logic as if <delta> seconds have passed.
+	for (int i = 0; i < NUM_STARS; i++) {
+		data->stars[i].counter += delta * data->stars[i].speed;
+	}
 }
 
 void Gamestate_Draw(struct Game* game, struct GamestateResources* data) {
 	// Draw everything to the screen here.
+	DrawVerticalGradientRect(0, 0, game->viewport.width, game->viewport.height,
+		al_map_rgb(0, 0, 16), al_map_rgb(0, 0, 64));
+
+	for (int i = 0; i < NUM_STARS; i++) {
+		double shininess = (1 - (cos(data->stars[i].counter * 4.2) + 1) * 0.1) * 0.8;
+		al_draw_tinted_scaled_rotated_bitmap(data->star, al_map_rgb_f(shininess, shininess, shininess), al_get_bitmap_width(data->star) / 2, al_get_bitmap_height(data->star) / 2,
+			data->stars[i].x * game->viewport.width, data->stars[i].y * game->viewport.height, data->stars[i].size, data->stars[i].size,
+			sin(data->stars[i].counter) * data->stars[i].deviation, 0);
+	}
+
+	al_draw_bitmap(data->houses, 0, 0, 0);
 }
 
 void Gamestate_ProcessEvent(struct Game* game, struct GamestateResources* data, ALLEGRO_EVENT* ev) {
@@ -55,19 +73,33 @@ void* Gamestate_Load(struct Game* game, void (*progress)(struct Game*)) {
 	// create VBOs, etc. do it in Gamestate_PostLoad.
 
 	struct GamestateResources* data = calloc(1, sizeof(struct GamestateResources));
+	data->star = al_load_bitmap(GetDataFilePath(game, "gwiazdka.png"));
 	progress(game); // report that we progressed with the loading, so the engine can move a progress bar
+
+	data->houses = al_load_bitmap(GetDataFilePath(game, "domki.png"));
+	progress(game);
+
 	return data;
 }
 
 void Gamestate_Unload(struct Game* game, struct GamestateResources* data) {
 	// Called when the gamestate library is being unloaded.
 	// Good place for freeing all allocated memory and resources.
+	al_destroy_bitmap(data->star);
 	free(data);
 }
 
 void Gamestate_Start(struct Game* game, struct GamestateResources* data) {
 	// Called when this gamestate gets control. Good place for initializing state,
 	// playing music etc.
+	for (int i = 0; i < NUM_STARS; i++) {
+		data->stars[i].x = rand() / (double)RAND_MAX;
+		data->stars[i].y = rand() / (double)RAND_MAX;
+		data->stars[i].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+		data->stars[i].size = rand() / (double)RAND_MAX * 0.5 + 0.75;
+		data->stars[i].speed = rand() / (double)RAND_MAX * 0.1 + 1;
+		data->stars[i].deviation = rand() / (double)RAND_MAX;
+	}
 }
 
 void Gamestate_Stop(struct Game* game, struct GamestateResources* data) {

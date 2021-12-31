@@ -39,8 +39,8 @@ int main(int argc, char** argv) {
 
 	struct Game* game = libsuperderpy_init(argc, argv, LIBSUPERDERPY_GAMENAME,
 		(struct Params){
-			320,
-			180,
+			3840,
+			2160,
 			.handlers = {
 				.event = GlobalEventHandler,
 				.destroy = DestroyGameData,
