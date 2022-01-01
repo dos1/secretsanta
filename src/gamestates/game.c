@@ -51,9 +51,62 @@ struct GamestateResources {
 
 	struct {
 		bool enabled;
-		double x, y, counter;
+		double x, y, counter, angle, left, deviation, speed, rotspeed, timemax, timemin;
 	} drones[MAX_DRONES];
 };
+
+static double TriangleArea(double x1, double y1, double x2, double y2, double x3, double y3) {
+	return fabs((x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)) / 2.0);
+}
+
+static bool IsInsideTriangle(double x1, double y1, double x2, double y2, double x3, double y3, double x, double y) {
+	double A = TriangleArea(x1, y1, x2, y2, x3, y3);
+	double A1 = TriangleArea(x, y, x2, y2, x3, y3);
+	double A2 = TriangleArea(x1, y1, x, y, x3, y3);
+	double A3 = TriangleArea(x1, y1, x2, y2, x, y);
+	return fabs(A - (A1 + A2 + A3)) < 0.001;
+}
+
+static void GetDroneTriangle(struct Game* game, struct GamestateResources* data, int i, double* x1, double* y1, double* x2, double* y2, double* x3, double* y3) {
+	double x = data->drones[i].x;
+	double y = data->drones[i].y + cos(data->drones[i].counter * data->drones[i].speed) * data->drones[i].deviation + 0.02;
+
+	*x1 = x;
+	*y1 = y;
+	*x2 = x + cos(data->drones[i].angle + 0.33) * 0.33;
+	*y2 = y + sin(data->drones[i].angle + 0.33) * 0.33 * 1.777;
+	*x3 = x + cos(data->drones[i].angle - 0.33) * 0.33;
+	*y3 = y + sin(data->drones[i].angle - 0.33) * 0.33 * 1.777;
+}
+
+static bool IsSantaInDroneTriangle(struct Game* game, struct GamestateResources* data, int i) {
+	// don't judge me
+	double x1, y1, x2, y2, x3, y3;
+	GetDroneTriangle(game, data, i, &x1, &y1, &x2, &y2, &x3, &y3);
+	/*
+	al_draw_filled_circle((data->santa.x) * game->viewport.width, (data->santa.y) * game->viewport.height, 15, al_map_rgb(255, 255, 255));
+	al_draw_filled_circle((data->santa.x + cos(data->santa.rot) * 0.14) * game->viewport.width, (data->santa.y + sin(data->santa.rot) * 0.14 * 1.7777) * game->viewport.height, 15, al_map_rgb(255, 255, 255));
+	al_draw_filled_circle((data->santa.x + cos(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02) * game->viewport.width, (data->santa.y + sin(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02 * 1.7777) * game->viewport.height, 15, al_map_rgb(255, 255, 255));
+	al_draw_filled_circle((data->santa.x + cos(data->santa.rot) * 0.07) * game->viewport.width, (data->santa.y + sin(data->santa.rot) * 0.07 * 1.7777) * game->viewport.height, 15, al_map_rgb(255, 255, 255));
+	al_draw_filled_circle((data->santa.x + cos(data->santa.rot) * 0.035) * game->viewport.width, (data->santa.y + sin(data->santa.rot) * 0.035 * 1.7777) * game->viewport.height, 15, al_map_rgb(255, 255, 255));
+	al_draw_filled_circle((data->santa.x + cos(data->santa.rot) * 0.105) * game->viewport.width, (data->santa.y + sin(data->santa.rot) * 0.105 * 1.7777) * game->viewport.height, 15, al_map_rgb(255, 255, 255));
+	*/
+	if (IsInsideTriangle(x1, y1, x2, y2, x3, y3, data->santa.x, data->santa.y)) return true;
+	if (IsInsideTriangle(x1, y1, x2, y2, x3, y3, data->santa.x + cos(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02, data->santa.y + sin(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02)) return true;
+
+	if (IsInsideTriangle(x1, y1, x2, y2, x3, y3, data->santa.x + cos(data->santa.rot) * 0.14, data->santa.y + sin(data->santa.rot) * 0.14 * 1.7777)) return true;
+	if (IsInsideTriangle(x1, y1, x2, y2, x3, y3, data->santa.x + cos(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02 + cos(data->santa.rot) * 0.14, data->santa.y + sin(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02 + sin(data->santa.rot) * 0.14 * 1.7777)) return true;
+
+	if (IsInsideTriangle(x1, y1, x2, y2, x3, y3, data->santa.x + cos(data->santa.rot) * 0.07, data->santa.y + sin(data->santa.rot) * 0.07 * 1.7777)) return true;
+	if (IsInsideTriangle(x1, y1, x2, y2, x3, y3, data->santa.x + cos(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02 + cos(data->santa.rot) * 0.07, data->santa.y + sin(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02 + sin(data->santa.rot) * 0.07 * 1.7777)) return true;
+
+	if (IsInsideTriangle(x1, y1, x2, y2, x3, y3, data->santa.x + cos(data->santa.rot) * 0.035, data->santa.y + sin(data->santa.rot) * 0.035 * 1.7777)) return true;
+	if (IsInsideTriangle(x1, y1, x2, y2, x3, y3, data->santa.x + cos(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02 + cos(data->santa.rot) * 0.035, data->santa.y + sin(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02 + sin(data->santa.rot) * 0.035 * 1.7777)) return true;
+
+	if (IsInsideTriangle(x1, y1, x2, y2, x3, y3, data->santa.x + cos(data->santa.rot) * 0.105, data->santa.y + sin(data->santa.rot) * 0.105 * 1.7777)) return true;
+	if (IsInsideTriangle(x1, y1, x2, y2, x3, y3, data->santa.x + cos(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02 + cos(data->santa.rot) * 0.105, data->santa.y + sin(data->santa.rot - ALLEGRO_PI / 2.0) * 0.02 + sin(data->santa.rot) * 0.105 * 1.7777)) return true;
+	return false;
+}
 
 void Gamestate_Logic(struct Game* game, struct GamestateResources* data, double delta) {
 	// Here you should do all your game logic as if <delta> seconds have passed.
@@ -62,6 +115,19 @@ void Gamestate_Logic(struct Game* game, struct GamestateResources* data, double 
 	}
 	for (int i = 0; i < MAX_DRONES; i++) {
 		data->drones[i].counter += delta;
+		if (data->drones[i].left > 0) {
+			data->drones[i].left -= delta;
+			data->drones[i].angle -= delta * data->drones[i].rotspeed;
+			if (data->drones[i].left <= 0) {
+				data->drones[i].left = (rand() / (double)RAND_MAX * (data->drones[i].timemax - data->drones[i].timemin) + data->drones[i].timemin) * ((rand() % 2) ? 1 : -1);
+			}
+		} else if (data->drones[i].left < 0) {
+			data->drones[i].left += delta;
+			data->drones[i].angle += delta * data->drones[i].rotspeed;
+			if (data->drones[i].left >= 0) {
+				data->drones[i].left = (rand() / (double)RAND_MAX * (data->drones[i].timemax - data->drones[i].timemin) + data->drones[i].timemin) * ((rand() % 2) ? 1 : -1);
+			}
+		}
 	}
 
 	double dspeed = 0;
@@ -147,15 +213,26 @@ void Gamestate_Draw(struct Game* game, struct GamestateResources* data) {
 	al_use_shader(NULL);
 	al_draw_text(data->font, al_map_rgb(19, 209, 45), game->viewport.width * (0.98 + cos(game->time * 3) * 0.003), game->viewport.height * 0.077, ALLEGRO_ALIGN_CENTER, ">");
 
+	for (int i = 0; i < MAX_DRONES; i++) {
+		if (!data->drones[i].enabled) continue;
+
+		double x = data->drones[i].x;
+		double y = data->drones[i].y + cos(data->drones[i].counter * data->drones[i].speed) * data->drones[i].deviation;
+
+		double x1, y1, x2, y2, x3, y3;
+		GetDroneTriangle(game, data, i, &x1, &y1, &x2, &y2, &x3, &y3);
+		al_draw_filled_triangle(x1 * game->viewport.width, y1 * game->viewport.height,
+			x2 * game->viewport.width, y2 * game->viewport.height,
+			x3 * game->viewport.width, y3 * game->viewport.height,
+			IsSantaInDroneTriangle(game, data, i) ? al_premul_rgba(255, 168, 255, 192) : al_premul_rgba(77, 168, 255, 192));
+
+		al_draw_rotated_bitmap(data->drone, al_get_bitmap_width(data->drone) / 2, al_get_bitmap_height(data->drone) / 2,
+			game->viewport.width * x, game->viewport.height * y, 0, 0);
+	}
+
 	al_draw_rotated_bitmap(data->santa.bitmap, 115, 160,
 		data->santa.x * game->viewport.width, data->santa.y * game->viewport.height,
 		data->santa.rot, (fabs(fmod(data->santa.rot + ALLEGRO_PI / 2, ALLEGRO_PI * 2)) > ALLEGRO_PI) ? ALLEGRO_FLIP_VERTICAL : 0);
-
-	for (int i = 0; i < MAX_DRONES; i++) {
-		if (!data->drones[i].enabled) continue;
-		al_draw_rotated_bitmap(data->drone, al_get_bitmap_width(data->drone) / 2, al_get_bitmap_height(data->drone) / 2,
-			game->viewport.width * data->drones[i].x, game->viewport.height * (data->drones[i].y + cos(data->drones[i].counter * 4) * 0.005), 0, 0);
-	}
 }
 
 void Gamestate_ProcessEvent(struct Game* game, struct GamestateResources* data, ALLEGRO_EVENT* ev) {
@@ -254,6 +331,13 @@ void Gamestate_Start(struct Game* game, struct GamestateResources* data) {
 	data->drones[0].x = 0.5;
 	data->drones[0].y = 0.4;
 	data->drones[0].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+	data->drones[0].angle = -ALLEGRO_PI / 2;
+	data->drones[0].left = 4;
+	data->drones[0].deviation = 0.005;
+	data->drones[0].speed = 4;
+	data->drones[0].rotspeed = 0.333;
+	data->drones[0].timemin = 2;
+	data->drones[0].timemax = 5;
 }
 
 void Gamestate_Stop(struct Game* game, struct GamestateResources* data) {
