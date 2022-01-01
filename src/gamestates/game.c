@@ -269,7 +269,9 @@ void Gamestate_Draw(struct Game* game, struct GamestateResources* data) {
 
 	al_draw_scaled_rotated_bitmap(data->logo, al_get_bitmap_width(data->logo) / 2, al_get_bitmap_height(data->logo) / 2,
 		game->viewport.width * 0.5, game->viewport.height * -0.55, 2.5, 2.5, 0, 0);
-	if (!data->started) al_draw_text(data->font, al_map_rgb(255, 255, 255), game->viewport.width * 0.5, game->viewport.height * -0.3, ALLEGRO_ALIGN_CENTER, "Press any key...");
+	if (fmod(game->time, 1.0) < 0.8 && !data->started) {
+		al_draw_text(data->font, al_map_rgb(255, 255, 255), game->viewport.width * 0.5, game->viewport.height * -0.3, ALLEGRO_ALIGN_CENTER, "Press any key...");
+	}
 
 	al_draw_bitmap(data->houses, 0, 1221, data->level % 2 ? ALLEGRO_FLIP_HORIZONTAL : 0);
 
