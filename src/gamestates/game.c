@@ -30,21 +30,63 @@ struct GamestateResources {
 	struct {
 		double x, y, counter, speed, size, deviation;
 	} stars[NUM_STARS];
+	struct {
+		double x, y, rot, speed, dspeed;
+		ALLEGRO_BITMAP* bitmap;
+	} santa;
+	struct {
+		ALLEGRO_SHADER* invert;
+	} shaders;
+	struct {
+		bool accelerate, brake, left, right;
+	} keys;
 };
 
-int Gamestate_ProgressCount = 1; // number of loading steps as reported by Gamestate_Load; 0 when missing
+int Gamestate_ProgressCount = 3; // number of loading steps as reported by Gamestate_Load; 0 when missing
 
 void Gamestate_Logic(struct Game* game, struct GamestateResources* data, double delta) {
 	// Here you should do all your game logic as if <delta> seconds have passed.
 	for (int i = 0; i < NUM_STARS; i++) {
 		data->stars[i].counter += delta * data->stars[i].speed;
 	}
+
+	double dspeed = 0;
+	if (data->keys.accelerate) {
+		dspeed += 0.03;
+	}
+	if (data->keys.brake) {
+		dspeed += (data->santa.speed > 0) ? -0.02 : -0.01;
+	}
+	data->santa.speed = fmin(1, fmax(-0.5, data->santa.speed + dspeed));
+
+	data->santa.speed *= 0.975;
+
+	data->santa.x += cos(data->santa.rot) * data->santa.speed * 0.005;
+	data->santa.y += sin(data->santa.rot) * data->santa.speed * 0.005;
+
+	double dangle = 0;
+	if (data->keys.left) {
+		dangle += -0.025;
+	}
+	if (data->keys.right) {
+		dangle += 0.025;
+	}
+	data->santa.rot += dangle;
+	if (data->santa.rot > ALLEGRO_PI * 2) {
+		data->santa.rot -= ALLEGRO_PI * 2;
+	}
+	if (data->santa.rot < 0) {
+		data->santa.rot += ALLEGRO_PI * 2;
+	}
+
+	data->santa.x = fmax(0, fmin(data->santa.x, 1));
+	data->santa.y = fmax(0, fmin(data->santa.y, 1));
 }
 
 void Gamestate_Draw(struct Game* game, struct GamestateResources* data) {
 	// Draw everything to the screen here.
 	DrawVerticalGradientRect(0, 0, game->viewport.width, game->viewport.height,
-		al_map_rgb(0, 0, 16), al_map_rgb(0, 0, 64));
+		al_map_rgb(0, 0, 16 + 128), al_map_rgb(0, 0, 64 + 128));
 
 	for (int i = 0; i < NUM_STARS; i++) {
 		double shininess = (1 - (cos(data->stars[i].counter * 4.2) + 1) * 0.1) * 0.8;
@@ -53,7 +95,13 @@ void Gamestate_Draw(struct Game* game, struct GamestateResources* data) {
 			sin(data->stars[i].counter) * data->stars[i].deviation, 0);
 	}
 
-	al_draw_bitmap(data->houses, 0, 0, 0);
+	al_draw_bitmap(data->houses, 0, 1260, 0);
+
+	al_use_shader(data->shaders.invert);
+	al_draw_rotated_bitmap(data->santa.bitmap, 70, 80,
+		data->santa.x * game->viewport.width, data->santa.y * game->viewport.height,
+		data->santa.rot, (fabs(fmod(data->santa.rot + ALLEGRO_PI / 2, ALLEGRO_PI * 2)) > ALLEGRO_PI) ? ALLEGRO_FLIP_VERTICAL : 0);
+	al_use_shader(NULL);
 }
 
 void Gamestate_ProcessEvent(struct Game* game, struct GamestateResources* data, ALLEGRO_EVENT* ev) {
@@ -62,6 +110,30 @@ void Gamestate_ProcessEvent(struct Game* game, struct GamestateResources* data, 
 	if ((ev->type == ALLEGRO_EVENT_KEY_DOWN) && (ev->keyboard.keycode == ALLEGRO_KEY_ESCAPE)) {
 		UnloadCurrentGamestate(game); // mark this gamestate to be stopped and unloaded
 		// When there are no active gamestates, the engine will quit.
+	}
+	if ((ev->type == ALLEGRO_EVENT_KEY_DOWN) && (ev->keyboard.keycode == ALLEGRO_KEY_UP)) {
+		data->keys.accelerate = true;
+	}
+	if ((ev->type == ALLEGRO_EVENT_KEY_UP) && (ev->keyboard.keycode == ALLEGRO_KEY_UP)) {
+		data->keys.accelerate = false;
+	}
+	if ((ev->type == ALLEGRO_EVENT_KEY_DOWN) && (ev->keyboard.keycode == ALLEGRO_KEY_DOWN)) {
+		data->keys.brake = true;
+	}
+	if ((ev->type == ALLEGRO_EVENT_KEY_UP) && (ev->keyboard.keycode == ALLEGRO_KEY_DOWN)) {
+		data->keys.brake = false;
+	}
+	if ((ev->type == ALLEGRO_EVENT_KEY_DOWN) && (ev->keyboard.keycode == ALLEGRO_KEY_LEFT)) {
+		data->keys.left = true;
+	}
+	if ((ev->type == ALLEGRO_EVENT_KEY_UP) && (ev->keyboard.keycode == ALLEGRO_KEY_LEFT)) {
+		data->keys.left = false;
+	}
+	if ((ev->type == ALLEGRO_EVENT_KEY_DOWN) && (ev->keyboard.keycode == ALLEGRO_KEY_RIGHT)) {
+		data->keys.right = true;
+	}
+	if ((ev->type == ALLEGRO_EVENT_KEY_UP) && (ev->keyboard.keycode == ALLEGRO_KEY_RIGHT)) {
+		data->keys.right = false;
 	}
 }
 
@@ -79,6 +151,11 @@ void* Gamestate_Load(struct Game* game, void (*progress)(struct Game*)) {
 	data->houses = al_load_bitmap(GetDataFilePath(game, "domki.png"));
 	progress(game);
 
+	data->santa.bitmap = al_load_bitmap(GetDataFilePath(game, "santa.png"));
+	progress(game);
+
+	data->shaders.invert = CreateShader(game, GetDataFilePath(game, "shaders/vertex.glsl"), GetDataFilePath(game, "shaders/invert.glsl"));
+
 	return data;
 }
 
@@ -86,6 +163,9 @@ void Gamestate_Unload(struct Game* game, struct GamestateResources* data) {
 	// Called when the gamestate library is being unloaded.
 	// Good place for freeing all allocated memory and resources.
 	al_destroy_bitmap(data->star);
+	al_destroy_bitmap(data->houses);
+	al_destroy_bitmap(data->santa.bitmap);
+	DestroyShader(game, data->shaders.invert);
 	free(data);
 }
 
@@ -100,6 +180,10 @@ void Gamestate_Start(struct Game* game, struct GamestateResources* data) {
 		data->stars[i].speed = rand() / (double)RAND_MAX * 0.1 + 1;
 		data->stars[i].deviation = rand() / (double)RAND_MAX;
 	}
+
+	data->santa.x = 0.055;
+	data->santa.y = 0.7;
+	data->santa.rot = -ALLEGRO_PI / 2.0;
 }
 
 void Gamestate_Stop(struct Game* game, struct GamestateResources* data) {
