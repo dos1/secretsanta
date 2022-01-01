@@ -31,6 +31,9 @@ struct GamestateResources {
 	// It gets created on load and then gets passed around to all other function calls.
 	ALLEGRO_BITMAP *star, *houses, *drone;
 	ALLEGRO_FONT* font;
+	double pause;
+	int level;
+	bool retry;
 
 	struct {
 		double x, y, counter, speed, size, deviation;
@@ -51,7 +54,7 @@ struct GamestateResources {
 
 	struct {
 		bool enabled;
-		double x, y, counter, angle, left, deviation, speed, rotspeed, timemax, timemin;
+		double x, y, counter, angle, left, deviation, speed, rotspeed, timemax, timemin, length, span;
 	} drones[MAX_DRONES];
 };
 
@@ -73,10 +76,10 @@ static void GetDroneTriangle(struct Game* game, struct GamestateResources* data,
 
 	*x1 = x;
 	*y1 = y;
-	*x2 = x + cos(data->drones[i].angle + 0.33) * 0.33;
-	*y2 = y + sin(data->drones[i].angle + 0.33) * 0.33 * 1.777;
-	*x3 = x + cos(data->drones[i].angle - 0.33) * 0.33;
-	*y3 = y + sin(data->drones[i].angle - 0.33) * 0.33 * 1.777;
+	*x2 = x + cos(data->drones[i].angle + data->drones[i].span) * data->drones[i].length;
+	*y2 = y + sin(data->drones[i].angle + data->drones[i].span) * data->drones[i].length * 1.777;
+	*x3 = x + cos(data->drones[i].angle - data->drones[i].span) * data->drones[i].length;
+	*y3 = y + sin(data->drones[i].angle - data->drones[i].span) * data->drones[i].length * 1.777;
 }
 
 static bool IsSantaInDroneTriangle(struct Game* game, struct GamestateResources* data, int i) {
@@ -113,7 +116,19 @@ void Gamestate_Logic(struct Game* game, struct GamestateResources* data, double 
 	for (int i = 0; i < NUM_STARS; i++) {
 		data->stars[i].counter += delta * data->stars[i].speed;
 	}
+
+	if (data->pause) {
+		data->pause -= delta;
+		if (data->pause <= 0) {
+			data->retry = true;
+			Gamestate_Start(game, data);
+		}
+		return;
+	}
+
 	for (int i = 0; i < MAX_DRONES; i++) {
+		if (!data->drones[i].enabled) continue;
+
 		data->drones[i].counter += delta;
 		if (data->drones[i].left > 0) {
 			data->drones[i].left -= delta;
@@ -127,6 +142,10 @@ void Gamestate_Logic(struct Game* game, struct GamestateResources* data, double 
 			if (data->drones[i].left >= 0) {
 				data->drones[i].left = (rand() / (double)RAND_MAX * (data->drones[i].timemax - data->drones[i].timemin) + data->drones[i].timemin) * ((rand() % 2) ? 1 : -1);
 			}
+		}
+
+		if (IsSantaInDroneTriangle(game, data, i)) {
+			data->pause = 1;
 		}
 	}
 
@@ -162,7 +181,10 @@ void Gamestate_Logic(struct Game* game, struct GamestateResources* data, double 
 	data->santa.x = fmax(0, fmin(data->santa.x, 1));
 	data->santa.y = fmax(0, fmin(data->santa.y, 1));
 
-	if (data->santa.x > 0.99 && data->santa.y < 0.2) Gamestate_Start(game, data);
+	if (data->santa.x > 0.99 && data->santa.y < 0.2) {
+		data->level++;
+		Gamestate_Start(game, data);
+	}
 }
 
 static void DrawTexturedRectangle(float x1, float y1, float x2, float y2, ALLEGRO_COLOR color) {
@@ -206,7 +228,7 @@ void Gamestate_Draw(struct Game* game, struct GamestateResources* data) {
 			sin(data->stars[i].counter) * data->stars[i].deviation, 0);
 	}
 
-	al_draw_bitmap(data->houses, 0, 1221, 0);
+	al_draw_bitmap(data->houses, 0, 1221, data->level % 2 ? ALLEGRO_FLIP_HORIZONTAL : 0);
 
 	al_use_shader(data->shaders.circular);
 	DrawTexturedRectangle(game->viewport.width * 0.96, 0, game->viewport.width * 1.06, game->viewport.height * 0.2, al_premul_rgba(19, 209, 45, 222));
@@ -293,7 +315,7 @@ void* Gamestate_Load(struct Game* game, void (*progress)(struct Game*)) {
 
 	data->shaders.invert = CreateShader(game, GetDataFilePath(game, "shaders/vertex.glsl"), GetDataFilePath(game, "shaders/invert.glsl"));
 	data->shaders.circular = CreateShader(game, GetDataFilePath(game, "shaders/vertex.glsl"), GetDataFilePath(game, "shaders/circular_gradient.glsl"));
-
+	// data->level = 4;
 	return data;
 }
 
@@ -313,6 +335,8 @@ void Gamestate_Unload(struct Game* game, struct GamestateResources* data) {
 void Gamestate_Start(struct Game* game, struct GamestateResources* data) {
 	// Called when this gamestate gets control. Good place for initializing state,
 	// playing music etc.
+	data->pause = 0;
+
 	for (int i = 0; i < NUM_STARS; i++) {
 		data->stars[i].x = rand() / (double)RAND_MAX;
 		data->stars[i].y = rand() / (double)RAND_MAX;
@@ -327,17 +351,179 @@ void Gamestate_Start(struct Game* game, struct GamestateResources* data) {
 	data->santa.rot = -ALLEGRO_PI / 2.0;
 	data->santa.speed = 0;
 
-	data->drones[0].enabled = true;
-	data->drones[0].x = 0.5;
-	data->drones[0].y = 0.4;
-	data->drones[0].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
-	data->drones[0].angle = -ALLEGRO_PI / 2;
-	data->drones[0].left = 4;
-	data->drones[0].deviation = 0.005;
-	data->drones[0].speed = 4;
-	data->drones[0].rotspeed = 0.333;
-	data->drones[0].timemin = 2;
-	data->drones[0].timemax = 5;
+	if (data->level == 0) {
+		data->drones[0].enabled = true;
+		data->drones[0].x = 0.5;
+		data->drones[0].y = 0.4;
+		data->drones[0].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+		data->drones[0].angle = -ALLEGRO_PI / 2;
+		data->drones[0].left = 4;
+		data->drones[0].deviation = 0.005;
+		data->drones[0].speed = 4;
+		data->drones[0].rotspeed = 0.333;
+		data->drones[0].timemin = 2;
+		data->drones[0].timemax = 5;
+		data->drones[0].span = 0.33;
+		data->drones[0].length = 0.33;
+	}
+
+	if (data->level == 1) {
+		data->drones[0].enabled = true;
+		data->drones[0].x = 0.42;
+		data->drones[0].y = 0.5;
+		data->drones[0].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+		data->drones[0].angle = -ALLEGRO_PI / 2 * 0.245;
+		data->drones[0].left = 3.5;
+		data->drones[0].deviation = 0.007;
+		data->drones[0].speed = 3.7;
+		data->drones[0].rotspeed = 0.4;
+		data->drones[0].timemin = 3;
+		data->drones[0].timemax = 6;
+		data->drones[0].span = 0.23;
+		data->drones[0].length = 0.33;
+
+		data->drones[1].enabled = true;
+		data->drones[1].x = 0.7;
+		data->drones[1].y = 0.3;
+		data->drones[1].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+		data->drones[1].angle = -ALLEGRO_PI / 2;
+		data->drones[1].left = 4;
+		data->drones[1].deviation = 0.005;
+		data->drones[1].speed = 4;
+		data->drones[1].rotspeed = 0.333;
+		data->drones[1].timemin = 2;
+		data->drones[1].timemax = 5;
+		data->drones[1].span = 0.33;
+		data->drones[1].length = 0.23;
+	}
+
+	if (data->level == 2) {
+		data->drones[0].enabled = true;
+		data->drones[0].x = 0.4;
+		data->drones[0].y = 0.3;
+		data->drones[0].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+		data->drones[0].angle = -ALLEGRO_PI / 2 * 0.245;
+		data->drones[0].left = 3.5;
+		data->drones[0].deviation = 0.007;
+		data->drones[0].speed = 3.7;
+		data->drones[0].rotspeed = 0.4;
+		data->drones[0].timemin = 3;
+		data->drones[0].timemax = 6;
+		data->drones[0].span = 0.33;
+		data->drones[0].length = 0.33;
+
+		data->drones[1].enabled = true;
+		data->drones[1].x = 0.55;
+		data->drones[1].y = 0.6;
+		data->drones[1].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+		data->drones[1].angle = -ALLEGRO_PI / 2;
+		data->drones[1].left = 4;
+		data->drones[1].deviation = 0.005;
+		data->drones[1].speed = 4;
+		data->drones[1].rotspeed = 0.333;
+		data->drones[1].timemin = 2;
+		data->drones[1].timemax = 5;
+		data->drones[1].span = 0.33;
+		data->drones[1].length = 0.33;
+
+		data->drones[2].enabled = true;
+		data->drones[2].x = 0.75;
+		data->drones[2].y = 0.5;
+		data->drones[2].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+		data->drones[2].angle = -ALLEGRO_PI / 2 * rand();
+		data->drones[2].left = 1;
+		data->drones[2].deviation = 0.005;
+		data->drones[2].speed = 4;
+		data->drones[2].rotspeed = 0.5;
+		data->drones[2].timemin = 1;
+		data->drones[2].timemax = 3;
+		data->drones[2].span = 0.33;
+		data->drones[2].length = 0.33;
+	}
+
+	if (data->level == 3) {
+		data->drones[0].enabled = true;
+		data->drones[0].x = 0.41;
+		data->drones[0].y = 0.6;
+		data->drones[0].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+		data->drones[0].angle = -ALLEGRO_PI / 2 * 0.245;
+		data->drones[0].left = 3.5;
+		data->drones[0].deviation = 0.007;
+		data->drones[0].speed = 3.7;
+		data->drones[0].rotspeed = 0.4;
+		data->drones[0].timemin = 3;
+		data->drones[0].timemax = 6;
+		data->drones[0].span = 0.23;
+		data->drones[0].length = 0.23;
+
+		data->drones[1].enabled = true;
+		data->drones[1].x = 0.5;
+		data->drones[1].y = 0.3;
+		data->drones[1].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+		data->drones[1].angle = -ALLEGRO_PI / 2;
+		data->drones[1].left = 4;
+		data->drones[1].deviation = 0.005;
+		data->drones[1].speed = 4;
+		data->drones[1].rotspeed = 0.333;
+		data->drones[1].timemin = 2;
+		data->drones[1].timemax = 5;
+		data->drones[1].span = 0.13;
+		data->drones[1].length = 0.35;
+
+		data->drones[2].enabled = true;
+		data->drones[2].x = 0.7;
+		data->drones[2].y = 0.55;
+		data->drones[2].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+		data->drones[2].angle = -ALLEGRO_PI / 2 * rand();
+		data->drones[2].left = 1;
+		data->drones[2].deviation = 0.005;
+		data->drones[2].speed = 4;
+		data->drones[2].rotspeed = 0.5;
+		data->drones[2].timemin = 1;
+		data->drones[2].timemax = 3;
+		data->drones[2].span = 0.33;
+		data->drones[2].length = 0.33;
+
+		data->drones[3].enabled = true;
+		data->drones[3].x = 0.66;
+		data->drones[3].y = 0.5;
+		data->drones[3].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+		data->drones[3].angle = -ALLEGRO_PI / 2 * rand();
+		data->drones[3].left = 1;
+		data->drones[3].deviation = 0.2;
+		data->drones[3].speed = 0.5;
+		data->drones[3].rotspeed = 0.2;
+		data->drones[3].timemin = 1;
+		data->drones[3].timemax = 3;
+		data->drones[3].span = 0.45;
+		data->drones[3].length = 0.1;
+	}
+
+	if (data->level > 3 && !data->retry) {
+		for (int i = 0; i < data->level; i++) {
+			data->drones[i].enabled = true;
+			data->drones[i].x = 0.4 + rand() / (double)RAND_MAX * 0.4;
+			data->drones[i].y = 0.1 + rand() / (double)RAND_MAX * 0.8;
+			data->drones[i].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+			data->drones[i].angle = rand();
+			data->drones[i].left = rand() / (double)RAND_MAX * 5;
+			data->drones[i].deviation = rand() / (double)RAND_MAX * 0.05;
+			data->drones[i].speed = 1 + rand() / (double)RAND_MAX * 3;
+			data->drones[i].rotspeed = 0.1 + rand() / (double)RAND_MAX * 0.4;
+			data->drones[i].timemin = 1 + rand() / (double)RAND_MAX * 4;
+			data->drones[i].timemax = data->drones[i].timemin + rand() / (double)RAND_MAX * 4;
+			data->drones[i].span = 0.1 + rand() / (double)RAND_MAX * 0.23;
+			data->drones[i].length = 0.1 + rand() / (double)RAND_MAX * 0.23;
+		}
+	}
+	if (data->level > 3 && data->retry) {
+		for (int i = 0; i < data->level; i++) {
+			data->drones[i].counter = rand() / (double)RAND_MAX * ALLEGRO_PI;
+			data->drones[i].angle = rand();
+		}
+	}
+
+	data->retry = false;
 }
 
 void Gamestate_Stop(struct Game* game, struct GamestateResources* data) {
