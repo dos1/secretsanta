@@ -24,16 +24,23 @@
 #define NUM_STARS 42
 #define MAX_DRONES 42
 
-int Gamestate_ProgressCount = 5; // number of loading steps as reported by Gamestate_Load; 0 when missing
+int Gamestate_ProgressCount = 11; // number of loading steps as reported by Gamestate_Load; 0 when missing
 
 struct GamestateResources {
 	// This struct is for every resource allocated and used by your gamestate.
 	// It gets created on load and then gets passed around to all other function calls.
-	ALLEGRO_BITMAP *star, *houses, *drone;
-	ALLEGRO_FONT* font;
+	ALLEGRO_BITMAP *star, *houses, *drone, *logo;
+	ALLEGRO_FONT *font, *bigfont;
+	ALLEGRO_AUDIO_STREAM* music;
+	ALLEGRO_SAMPLE *sample, *sample2;
+	ALLEGRO_SAMPLE_INSTANCE *lost, *start;
 	double pause;
+	bool started;
 	int level;
 	bool retry;
+	struct Tween logopos;
+	char* msg;
+	double msgtime;
 
 	struct {
 		double x, y, counter, speed, size, deviation;
@@ -117,6 +124,19 @@ void Gamestate_Logic(struct Game* game, struct GamestateResources* data, double 
 		data->stars[i].counter += delta * data->stars[i].speed;
 	}
 
+	if (data->msgtime) {
+		data->msgtime -= delta;
+		if (data->msgtime < 0) {
+			data->msgtime = 0;
+		}
+	}
+
+	if (!data->started) {
+		return;
+	}
+
+	UpdateTween(&data->logopos, delta);
+
 	if (data->pause) {
 		data->pause -= delta;
 		if (data->pause <= 0) {
@@ -126,28 +146,7 @@ void Gamestate_Logic(struct Game* game, struct GamestateResources* data, double 
 		return;
 	}
 
-	for (int i = 0; i < MAX_DRONES; i++) {
-		if (!data->drones[i].enabled) continue;
-
-		data->drones[i].counter += delta;
-		if (data->drones[i].left > 0) {
-			data->drones[i].left -= delta;
-			data->drones[i].angle -= delta * data->drones[i].rotspeed;
-			if (data->drones[i].left <= 0) {
-				data->drones[i].left = (rand() / (double)RAND_MAX * (data->drones[i].timemax - data->drones[i].timemin) + data->drones[i].timemin) * ((rand() % 2) ? 1 : -1);
-			}
-		} else if (data->drones[i].left < 0) {
-			data->drones[i].left += delta;
-			data->drones[i].angle += delta * data->drones[i].rotspeed;
-			if (data->drones[i].left >= 0) {
-				data->drones[i].left = (rand() / (double)RAND_MAX * (data->drones[i].timemax - data->drones[i].timemin) + data->drones[i].timemin) * ((rand() % 2) ? 1 : -1);
-			}
-		}
-
-		if (IsSantaInDroneTriangle(game, data, i)) {
-			data->pause = 1;
-		}
-	}
+	al_set_audio_stream_gain(data->music, fmin(1.0, al_get_audio_stream_gain(data->music) + delta / 2.0));
 
 	double dspeed = 0;
 	if (data->keys.accelerate) {
@@ -181,8 +180,38 @@ void Gamestate_Logic(struct Game* game, struct GamestateResources* data, double 
 	data->santa.x = fmax(0, fmin(data->santa.x, 1));
 	data->santa.y = fmax(0, fmin(data->santa.y, 1));
 
+	for (int i = 0; i < MAX_DRONES; i++) {
+		if (!data->drones[i].enabled) continue;
+
+		data->drones[i].counter += delta;
+		if (data->drones[i].left > 0) {
+			data->drones[i].left -= delta;
+			data->drones[i].angle -= delta * data->drones[i].rotspeed;
+			if (data->drones[i].left <= 0) {
+				data->drones[i].left = (rand() / (double)RAND_MAX * (data->drones[i].timemax - data->drones[i].timemin) + data->drones[i].timemin) * ((rand() % 2) ? 1 : -1);
+			}
+		} else if (data->drones[i].left < 0) {
+			data->drones[i].left += delta;
+			data->drones[i].angle += delta * data->drones[i].rotspeed;
+			if (data->drones[i].left >= 0) {
+				data->drones[i].left = (rand() / (double)RAND_MAX * (data->drones[i].timemax - data->drones[i].timemin) + data->drones[i].timemin) * ((rand() % 2) ? 1 : -1);
+			}
+		}
+
+		if (IsSantaInDroneTriangle(game, data, i)) {
+			data->pause = 2.4;
+			al_set_audio_stream_gain(data->music, 0);
+			al_stop_sample_instance(data->lost);
+			al_play_sample_instance(data->lost);
+			return;
+		}
+	}
+
 	if (data->santa.x > 0.99 && data->santa.y < 0.2) {
 		data->level++;
+		al_stop_sample_instance(data->start);
+		al_play_sample_instance(data->start);
+		al_set_audio_stream_gain(data->music, 0.75);
 		Gamestate_Start(game, data);
 	}
 }
@@ -221,12 +250,26 @@ void Gamestate_Draw(struct Game* game, struct GamestateResources* data) {
 	DrawVerticalGradientRect(0, 0, game->viewport.width, game->viewport.height,
 		al_map_rgb(0, 0, 16 + 0), al_map_rgb(0, 0, 64 + 0));
 
+	ALLEGRO_TRANSFORM transform;
+	al_identity_transform(&transform);
+	al_translate_transform(&transform, 0, GetTweenValue(&data->logopos) * game->viewport.height * 0.05);
+	PushTransform(game, &transform);
+
 	for (int i = 0; i < NUM_STARS; i++) {
 		double shininess = (1 - (cos(data->stars[i].counter * 4.2) + 1) * 0.1) * 0.8;
 		al_draw_tinted_scaled_rotated_bitmap(data->star, al_map_rgb_f(shininess, shininess, shininess), al_get_bitmap_width(data->star) / 2, al_get_bitmap_height(data->star) / 2,
 			data->stars[i].x * game->viewport.width, data->stars[i].y * game->viewport.height, data->stars[i].size * 0.8, data->stars[i].size * 0.8,
 			sin(data->stars[i].counter) * data->stars[i].deviation, 0);
 	}
+
+	PopTransform(game);
+	al_identity_transform(&transform);
+	al_translate_transform(&transform, 0, GetTweenValue(&data->logopos) * game->viewport.height);
+	PushTransform(game, &transform);
+
+	al_draw_scaled_rotated_bitmap(data->logo, al_get_bitmap_width(data->logo) / 2, al_get_bitmap_height(data->logo) / 2,
+		game->viewport.width * 0.5, game->viewport.height * -0.55, 2.5, 2.5, 0, 0);
+	if (!data->started) al_draw_text(data->font, al_map_rgb(255, 255, 255), game->viewport.width * 0.5, game->viewport.height * -0.3, ALLEGRO_ALIGN_CENTER, "Press any key...");
 
 	al_draw_bitmap(data->houses, 0, 1221, data->level % 2 ? ALLEGRO_FLIP_HORIZONTAL : 0);
 
@@ -243,10 +286,12 @@ void Gamestate_Draw(struct Game* game, struct GamestateResources* data) {
 
 		double x1, y1, x2, y2, x3, y3;
 		GetDroneTriangle(game, data, i, &x1, &y1, &x2, &y2, &x3, &y3);
-		al_draw_filled_triangle(x1 * game->viewport.width, y1 * game->viewport.height,
-			x2 * game->viewport.width, y2 * game->viewport.height,
-			x3 * game->viewport.width, y3 * game->viewport.height,
-			IsSantaInDroneTriangle(game, data, i) ? al_premul_rgba(255, 168, 255, 192) : al_premul_rgba(77, 168, 255, 192));
+		if (data->started) {
+			al_draw_filled_triangle(x1 * game->viewport.width, y1 * game->viewport.height,
+				x2 * game->viewport.width, y2 * game->viewport.height,
+				x3 * game->viewport.width, y3 * game->viewport.height,
+				IsSantaInDroneTriangle(game, data, i) ? al_premul_rgba(255, 168, 255, 192) : al_premul_rgba(77, 168, 255, 192));
+		}
 
 		al_draw_rotated_bitmap(data->drone, al_get_bitmap_width(data->drone) / 2, al_get_bitmap_height(data->drone) / 2,
 			game->viewport.width * x, game->viewport.height * y, 0, 0);
@@ -255,6 +300,12 @@ void Gamestate_Draw(struct Game* game, struct GamestateResources* data) {
 	al_draw_rotated_bitmap(data->santa.bitmap, 115, 160,
 		data->santa.x * game->viewport.width, data->santa.y * game->viewport.height,
 		data->santa.rot, (fabs(fmod(data->santa.rot + ALLEGRO_PI / 2, ALLEGRO_PI * 2)) > ALLEGRO_PI) ? ALLEGRO_FLIP_VERTICAL : 0);
+
+	PopTransform(game);
+
+	if (data->msgtime) {
+		al_draw_text(data->font, al_map_rgb(255, 255, 255), game->viewport.width * 0.5, game->viewport.height * 0.05, ALLEGRO_ALIGN_CENTER, data->msg);
+	}
 }
 
 void Gamestate_ProcessEvent(struct Game* game, struct GamestateResources* data, ALLEGRO_EVENT* ev) {
@@ -263,6 +314,13 @@ void Gamestate_ProcessEvent(struct Game* game, struct GamestateResources* data, 
 	if ((ev->type == ALLEGRO_EVENT_KEY_DOWN) && (ev->keyboard.keycode == ALLEGRO_KEY_ESCAPE)) {
 		UnloadCurrentGamestate(game); // mark this gamestate to be stopped and unloaded
 		// When there are no active gamestates, the engine will quit.
+	}
+	if (ev->type == ALLEGRO_EVENT_KEY_DOWN) {
+		if (!data->started) {
+			al_play_sample_instance(data->start);
+			al_set_audio_stream_gain(data->music, 0.75);
+			data->started = true;
+		}
 	}
 	if ((ev->type == ALLEGRO_EVENT_KEY_DOWN) && (ev->keyboard.keycode == ALLEGRO_KEY_UP)) {
 		data->keys.accelerate = true;
@@ -310,12 +368,38 @@ void* Gamestate_Load(struct Game* game, void (*progress)(struct Game*)) {
 	data->drone = al_load_bitmap(GetDataFilePath(game, "drone.png"));
 	progress(game);
 
+	data->logo = al_load_bitmap(GetDataFilePath(game, "logo.png"));
+	progress(game);
+
 	data->font = al_load_font(GetDataFilePath(game, "fonts/ComicMono.ttf"), 92, 0);
+	progress(game);
+
+	data->bigfont = al_load_font(GetDataFilePath(game, "fonts/ComicMono.ttf"), 256, 0);
 	progress(game);
 
 	data->shaders.invert = CreateShader(game, GetDataFilePath(game, "shaders/vertex.glsl"), GetDataFilePath(game, "shaders/invert.glsl"));
 	data->shaders.circular = CreateShader(game, GetDataFilePath(game, "shaders/vertex.glsl"), GetDataFilePath(game, "shaders/circular_gradient.glsl"));
 	// data->level = 4;
+	progress(game);
+
+	data->music = al_load_audio_stream(GetDataFilePath(game, "music2.flac"), 4, 2048);
+	al_set_audio_stream_playing(data->music, false);
+	al_set_audio_stream_playmode(data->music, ALLEGRO_PLAYMODE_LOOP);
+	al_attach_audio_stream_to_mixer(data->music, game->audio.music);
+	progress(game);
+
+	data->sample = al_load_sample(GetDataFilePath(game, "lost.flac"));
+	data->lost = al_create_sample_instance(data->sample);
+	al_attach_sample_instance_to_mixer(data->lost, game->audio.fx);
+	progress(game);
+
+	data->sample2 = al_load_sample(GetDataFilePath(game, "start.flac"));
+	data->start = al_create_sample_instance(data->sample2);
+	al_attach_sample_instance_to_mixer(data->start, game->audio.fx);
+	al_set_sample_instance_gain(data->start, 1.5);
+	progress(game);
+
+	data->logopos = Tween(game, 1.0, 0.0, TWEEN_STYLE_CUBIC_OUT, 2.0);
 	return data;
 }
 
@@ -326,9 +410,19 @@ void Gamestate_Unload(struct Game* game, struct GamestateResources* data) {
 	al_destroy_bitmap(data->houses);
 	al_destroy_bitmap(data->santa.bitmap);
 	al_destroy_bitmap(data->drone);
+	al_destroy_bitmap(data->logo);
 	DestroyShader(game, data->shaders.invert);
 	DestroyShader(game, data->shaders.circular);
 	al_destroy_font(data->font);
+	al_destroy_font(data->bigfont);
+	if (data->msg) {
+		free(data->msg);
+	}
+	al_destroy_sample_instance(data->lost);
+	al_destroy_sample(data->sample);
+	al_destroy_sample_instance(data->start);
+	al_destroy_sample(data->sample2);
+	al_destroy_audio_stream(data->music);
 	free(data);
 }
 
@@ -350,6 +444,18 @@ void Gamestate_Start(struct Game* game, struct GamestateResources* data) {
 	data->santa.y = 0.7;
 	data->santa.rot = -ALLEGRO_PI / 2.0;
 	data->santa.speed = 0;
+
+	if (data->level == 0 && !data->retry) {
+		al_set_audio_stream_playing(data->music, true);
+	}
+
+	if ((data->level == 0 && data->retry) || (data->level > 0)) {
+		if (data->msg) {
+			free(data->msg);
+		}
+		data->msg = strdup(PunchNumber(game, "Level XXX", 'X', data->level + 1));
+		data->msgtime = 2;
+	}
 
 	if (data->level == 0) {
 		data->drones[0].enabled = true;
